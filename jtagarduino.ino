@@ -38,6 +38,7 @@ void tclk(void)
   delay(TIME_DELAY);
 }
 
+
 void tms(boolean b)
 {
   /* not xor gives appropriate logic results here */
@@ -53,8 +54,12 @@ void tdi(boolean b)
 
 boolean getTdo(void)
 {
-  return 1;
-  /*digitalRead(PIN_TDO);*/
+      if(convertAnalog(analogRead(0)) > 3.0 ) {
+        return true;
+      } 
+      else {
+        return false;
+      }           
 }
 
 boolean pushTdi(boolean tmsTerminated=false)
@@ -79,25 +84,31 @@ void printHelp(void)
   Serial.println("T: tms on	t: tms off");
   Serial.println("D: tdi on	d: tdi off");
   Serial.println("I: get IDcode R: get Router type");
+  Serial.println("L: get IR length");
   Serial.println("");
 }
 
 void testLogicReset()
 {
-    tms(1); tclk();  tclk();  tclk();  tclk();  tclk();  
+    tms(1); tclk();  tclk();  tclk();  tclk();  tclk();
+}
+
+void gotoShiftDR()
+{
+  tms(0);  tclk();  tms(1);  tclk();  tms(0);  tclk();  tclk();  
 }
 
 void getIdcode()
 {
   testLogicReset();
-  tms(0);  tclk();  tms(1);  tclk();  tms(0);  tclk();  tclk();
+  gotoShiftDR();
 
   idcode.mword[0] = 0;
   idcode.mword[1] = 0;
   Serial.println("");
   for(int c=0; c < 2 ; c++) {
     for(int i=0; i < 16; i++) {
-      if(convertAnalog(analogRead(0)) > 3.0 ) {
+      if(getTdo()) {
         idcode.mword[1 - c] = idcode.mword[1 - c] | (1 << i);
         Serial.print(1);
       } 
@@ -110,6 +121,31 @@ void getIdcode()
   Serial.println("");
   Serial.print(idcode.mword[0],HEX);
   Serial.print(idcode.mword[1],HEX);
+}
+
+int getIRlength()
+{ 
+   testLogicReset();
+   tms(0); tclk(); tms(1); tclk(); tclk(); tms(0); tclk(); tclk();
+   
+   tdi(1);
+   for(int i=0;i<99;i++) {
+    tclk();
+   }
+   
+   tdi(0);  
+   int l=0;
+   for(l=0;l<99;l++) {
+    if(!getTdo())
+     break;
+    tclk(); 
+   }
+   
+   if(l==99){
+     return -1;
+   }
+   
+   return l;
 }
 
 void getRouterType()
@@ -129,45 +165,24 @@ void getRouterType()
   
 }
 
-
-
 void parseSerial(void)
 {
   char *c = new char;
   if(serialInput(c)){
     switch(*c) {
     case 'C':
-    case 'c':	
-      tclk();
-      break;
+    case 'c':	tclk();break;
       /*			case '!':    Serial.print(pushTdi());break;*/
-    case '!':    
-      pushTdi();
-      Serial.println(convertAnalog(analogRead(0)));
-      break;
-    case 'T':	
-      tms(1);
-      break;
-    case 't':	
-      tms(0);
-      break;
-    case 'D':	
-      tdi(1);
-      break;
-    case 'd':	
-      tdi(0);
-      break;
-    case 'I':       
-      getIdcode();
-      break;
-    case 'R':
-      getRouterType();
-      break;
-    case '?': 	
-      printHelp();
-      break;
-    default: 
-      break;
+    case '!':    pushTdi();      Serial.println(convertAnalog(analogRead(0)));      break;
+    case 'T':      tms(1);      break;
+    case 't':	   tms(0);      break;
+    case 'D':	   tdi(1);      break;
+    case 'd':	   tdi(0);      break;
+    case 'I':      getIdcode(); break;
+    case 'L':      Serial.println(getIRlength()); break;
+    case 'R':      getRouterType();   break;
+    case '?': 	   printHelp();      break;
+    default:       break;
     };
   }
   delete c;
