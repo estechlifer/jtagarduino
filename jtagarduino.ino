@@ -20,13 +20,48 @@
 union my_uint32_union{
         uint32_t mdword;
         uint16_t mword[2];
-} idcode;
+        uint8_t  mbyte[4];
+};
 
+struct router_info{
+        uint8_t IRLength;
+        my_uint32_union idcode;
+        my_uint32_union impcode;
+} router;
 
 
 float convertAnalog(int i, int vTop=5)
 { 
   return (float(vTop) / 1024.00) * float(i);
+}
+
+boolean getIRLength()
+{ 
+   testLogicReset();
+   tms(0); tclk(); tms(1); tclk(); tclk(); tms(0); tclk(); tclk();
+   
+   tdi(1);
+   for(uint8_t i=0;i<99;i++) {
+    tclk();
+   }
+   
+   tdi(0);  
+   uint8_t l=0;
+   for(l=0;l<99;l++) {
+    if(!getTdo())
+     break;
+    tclk(); 
+   }
+   
+   if(l==99){
+     Serial.println("Error: Unable to determine Instruction Register length!");
+     return false;
+   }
+   Serial.print("\r\nInstruction Register Length: ");
+   Serial.print(l);
+   Serial.print("\r\n");
+   router.IRLength = l;
+   return true;
 }
 
 void tclk(void)
@@ -62,14 +97,89 @@ boolean getTdo(void)
       }           
 }
 
-boolean pushTdi(boolean tmsTerminated=false)
+void clockBits(uint8_t *b, uint8_t *out, uint8_t i, boolean tmsTerminated=true)
 {
-  boolean out;
-  if(tmsTerminated)
+  int c=0;
+  if(!tmsTerminated){
+    for(c=0;c<i;c++) {
+      tdi( (b[int(c/8)] & (1 << (c % 8))) ? 1 : 0 );
+      if(NULL!=out)
+        out[int(c/8)] = out[int(c/8)] | ((1 << (c % 8)) & (getTdo()?0xFF:0));
+      tclk();
+    }
+  } else {
+    for(c=0;c<i-1;c++) {
+      tdi( (b[int(c/8)] & (1 << (c % 8))) ? 1 : 0 );
+      if(NULL!=out)
+        out[int(c/8)] = out[int(c/8)] | ((1 << (c % 8)) & (getTdo()?0xFF:0));
+      tclk();
+    }
     tms(1);
-  out = getTdo();
-  tclk();
-  return out;
+    tdi( (b[int(c/8)] & (1 << (c % 8))) ? 1 : 0 );
+    out[int((i-1)/8)] = out[int((i-1)/8)] | ((1 << ((i-1) % 8)) & (getTdo()?0xFF:0));
+    tclk();
+  }
+}
+
+
+void testLogicReset()
+{
+    tms(1); tclk();  tclk();  tclk();  tclk();  tclk();
+}
+
+void gotoShiftDR()
+{
+  tms(0);  tclk();  tms(1);  tclk();  tms(0);  tclk();  tclk();  
+}
+
+void getIdcode()
+{
+  testLogicReset();
+  gotoShiftDR();
+  my_uint32_union in;
+  in.mword[0]=0; in.mword[1]=0; router.idcode.mword[0]=0; router.idcode.mword[1]=0;
+  clockBits(in.mbyte,router.idcode.mbyte,32);
+  Serial.println("");  
+  /* lsb endianness assumed here */
+  Serial.print(router.idcode.mword[1],HEX);
+  Serial.print(router.idcode.mword[0],HEX);
+  Serial.println("");
+}
+
+/*
+boolean getImpCode()
+{
+  if(getIRLength() && router.IRLength==8) {
+    testLogicReset();
+    tms(0);tclk();tms(1);tclk();tclk();tms(0);tclk();tclk();
+    uint8_t in=b'00000111';
+    uint32_t out=0;
+    clockBits(in,out,8);
+    tclk();tclk();tms(0);tclk();
+    clockBits(in,out,32);
+    return true;
+  } else {
+    return false;
+  }
+  
+}*/
+
+boolean getRouterType()
+{
+  getIdcode();
+  Serial.println("");
+  switch(router.idcode.mword[1]) {
+  case 0x2535:
+    if(router.idcode.mword[0] == 0x417F) {
+
+      Serial.println("Broadcom BCM5354 KFBG Rev 2 CPU chip Found!");  
+    }
+    break;
+  default:
+    Serial.println("Router not found!");
+    return false;
+  }
+  return true;
 }
 
 void printHelp(void)
@@ -88,83 +198,6 @@ void printHelp(void)
   Serial.println("");
 }
 
-void testLogicReset()
-{
-    tms(1); tclk();  tclk();  tclk();  tclk();  tclk();
-}
-
-void gotoShiftDR()
-{
-  tms(0);  tclk();  tms(1);  tclk();  tms(0);  tclk();  tclk();  
-}
-
-void getIdcode()
-{
-  testLogicReset();
-  gotoShiftDR();
-
-  idcode.mword[0] = 0;
-  idcode.mword[1] = 0;
-  Serial.println("");
-  for(int c=0; c < 2 ; c++) {
-    for(int i=0; i < 16; i++) {
-      if(getTdo()) {
-        idcode.mword[1 - c] = idcode.mword[1 - c] | (1 << i);
-        Serial.print(1);
-      } 
-      else {
-        Serial.print(0);
-      }           
-      tclk();
-    }
-  }
-  Serial.println("");
-  Serial.print(idcode.mword[0],HEX);
-  Serial.print(idcode.mword[1],HEX);
-}
-
-int getIRlength()
-{ 
-   testLogicReset();
-   tms(0); tclk(); tms(1); tclk(); tclk(); tms(0); tclk(); tclk();
-   
-   tdi(1);
-   for(int i=0;i<99;i++) {
-    tclk();
-   }
-   
-   tdi(0);  
-   int l=0;
-   for(l=0;l<99;l++) {
-    if(!getTdo())
-     break;
-    tclk(); 
-   }
-   
-   if(l==99){
-     return -1;
-   }
-   
-   return l;
-}
-
-void getRouterType()
-{
-  getIdcode();
-  Serial.println("");
-  switch(idcode.mword[0]) {
-  case 0x2535:
-    if(idcode.mword[1] == 0x417F) {
-
-      Serial.println("Broadcom BCM5354 KFBG Rev 2 CPU chip Found!");  
-    }
-    break;
-  default:
-    Serial.println("Router not found!");
-  }
-  
-}
-
 void parseSerial(void)
 {
   char *c = new char;
@@ -172,14 +205,14 @@ void parseSerial(void)
     switch(*c) {
     case 'C':
     case 'c':	tclk();break;
-      /*			case '!':    Serial.print(pushTdi());break;*/
-    case '!':    pushTdi();      Serial.println(convertAnalog(analogRead(0)));      break;
+      /*			case '!':    Serial.print(());break;*/
+    case '!':      Serial.print(getTdo()); tclk();      break;
     case 'T':      tms(1);      break;
     case 't':	   tms(0);      break;
     case 'D':	   tdi(1);      break;
     case 'd':	   tdi(0);      break;
     case 'I':      getIdcode(); break;
-    case 'L':      Serial.println(getIRlength()); break;
+    case 'L':      getIRLength(); break;
     case 'R':      getRouterType();   break;
     case '?': 	   printHelp();      break;
     default:       break;
